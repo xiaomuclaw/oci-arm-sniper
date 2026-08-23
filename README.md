@@ -46,13 +46,14 @@ ssh-keygen -t ed25519 -f ~/.ssh/oracle_arm -N ""
 
 ### 5. 开跑
 
-Actions 标签页 → 左侧 **Oracle ARM Sniper** → **Run workflow**。
+**定时任务当前是关闭状态**（避免密钥没填齐时空跑）。填完 7 个 Secret 后：
 
-第一次务必手动跑一次：Preflight 步骤会校验全部 7 个密钥并打印解析出的
-可用域、镜像、子网名。密钥有错会在这一步直接红叉报错，而不是伪装成
-"没库存" 白跑 45 分钟。
+先手动验一次：Actions → 左侧 **Oracle ARM Sniper** → **Run workflow**。
+Preflight 步骤会校验全部 7 个密钥并打印解析出的可用域、镜像、子网名。
+密钥有错会在这一步直接红叉报错，而不是伪装成"没库存"白跑 45 分钟。
 
-Preflight 绿灯后就不用管了，定时任务每 15 分钟接力，24 小时不断。
+Preflight 绿灯后，再开定时：Actions → Oracle ARM Sniper → 右上 `···`
+→ **Enable workflow**。之后每 15 分钟接力，24 小时不断，不用管了。
 
 ## 抢到之后
 
