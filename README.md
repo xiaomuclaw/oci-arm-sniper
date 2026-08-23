@@ -108,6 +108,25 @@ Always Free ARM 额度（2026-08 实测，Oracle 已下调）：
 抢到后定时任务是关掉的。要再抢（比如删了实例想换区域）：
 Actions → Oracle ARM Sniper → 右上 `···` → **Enable workflow**。
 
+## 为什么 launch 必须带 --no-retry
+
+在 runner 上实测同一条 launch 命令：
+
+| 方式 | 单次耗时 |
+|---|---|
+| 默认 | **101 秒** |
+| `--no-retry` | **1 秒** |
+
+OCI CLI 默认对失败的 launch 做内部指数退避重试。两个后果：
+
+1. 44 分钟的窗口只能尝试 **12 次**（应有 70+），采样密度差 6 倍
+2. 每个隐藏重试都是独立 API 请求，一次逻辑尝试变成 ~8 个请求的突发，
+   **把自己搞成限流** —— 实测某轮 19 次尝试里 7 次返回 `TooManyRequests`
+
+带上 `--no-retry` 后：一次尝试 = 一个请求，节奏由脚本自己的 sleep 控制，
+既更快又更温和。限流退避改成 60→300 秒递增、正常应答后归零，
+避免卡在限流态。每轮结束会打印 `attempts=N no-capacity=N rate-limited=N`。
+
 ## 关于封号
 
 Oracle 对免费层试用的态度是：抢实例本身不违规（就是正常的 launch API），
