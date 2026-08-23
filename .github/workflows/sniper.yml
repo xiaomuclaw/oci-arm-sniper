@@ -13,12 +13,12 @@ on:
         description: 'Ubuntu version'
         default: '24.04'
 
-# Never run two snipers at once, and never cancel the active one.
   schedule:
     # Every 15 min. Each run loops for ~44 min, so coverage is continuous:
     # one run is always active and the next waits in the concurrency queue.
     - cron: '*/15 * * * *'
 
+# Never run two snipers at once, and never cancel the active one.
 concurrency:
   group: oracle-arm-sniper
   cancel-in-progress: false
