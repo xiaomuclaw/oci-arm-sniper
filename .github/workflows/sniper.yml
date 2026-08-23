@@ -17,11 +17,13 @@ on:
         default: '150'
 
   schedule:
-    # Every 15 min. Each run loops for ~44 min, so coverage is continuous:
-    # one run is always active and the next waits in the concurrency queue.
-    - cron: '*/15 * * * *'
+    # Safety net only — the relay in the last step is what actually keeps this
+    # going. GitHub's cron is best-effort and was not firing at all here, so
+    # this exists to restart the chain if a relay link is ever lost.
+    - cron: '17 */3 * * *'
 
-# Never run two snipers at once, and never cancel the active one.
+# One sniper at a time. cancel-in-progress must stay false: a cron tick or a
+# duplicate relay must never kill a run that is mid-hunt.
 concurrency:
   group: oracle-arm-sniper
   cancel-in-progress: false
@@ -145,8 +147,36 @@ jobs:
           echo "Image       : $IMAGE_ID (Ubuntu $OS_VERSION)"
           echo "Subnet      : $(echo "$SUBNET" | jq -r '.data."display-name"' 2>/dev/null || echo '(name unavailable)')"
 
+      # Disabling the schedule cannot cancel an already-queued relay, so every
+      # run checks for itself whether the hunt is already over.
+      - name: Stop if an ARM instance already exists
+        id: existing
+        run: |
+          set +e -uo pipefail
+          RUNNING=$(oci compute instance list \
+                      --compartment-id "$OCI_TENANCY" \
+                      --lifecycle-state RUNNING \
+                      2>/dev/null \
+                    | jq -r '[.data[]? | select(.shape=="VM.Standard.A1.Flex")] | length' \
+                      2>/dev/null)
+          PROV=$(oci compute instance list \
+                   --compartment-id "$OCI_TENANCY" \
+                   --lifecycle-state PROVISIONING \
+                   2>/dev/null \
+                 | jq -r '[.data[]? | select(.shape=="VM.Standard.A1.Flex")] | length' \
+                   2>/dev/null)
+          TOTAL=$(( ${RUNNING:-0} + ${PROV:-0} ))
+          echo "existing A1.Flex instances: running=${RUNNING:-0} provisioning=${PROV:-0}"
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "::notice::An A1.Flex instance already exists — nothing left to snipe."
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Snipe loop
         id: snipe
+        if: steps.existing.outputs.done != 'true'
         run: |
           # +e is deliberate: Actions runs `bash -e` by default, which would
           # abort this script on the first failed launch instead of retrying.
@@ -220,7 +250,7 @@ jobs:
                 limit)
                   echo "::warning::Service limit reached — your tenancy already holds its A1.Flex allowance (2 OCPU / 12 GB as of 2026-08)."
                   echo "Either the A1 core/memory allowance or the 200 GB storage cap is full."
-            echo "Delete an existing instance/volume, or lower ocpus/memory_gb/boot_gb."
+                  echo "Delete an existing instance/volume, or lower ocpus/memory_gb/boot_gb."
                   echo "$OUT" | tail -5
                   echo "outcome=limit" >> "$GITHUB_OUTPUT"
                   exit 0
@@ -323,4 +353,58 @@ jobs:
             --body-file /tmp/body.md \
             --assignee "${{ github.repository_owner }}" \
             || { echo "::warning::Issue creation failed; the details are printed below."; cat /tmp/body.md; }
+
+      # The relay. GitHub's cron is unreliable (it had not fired once in the
+      # first 40 minutes here), so each run hands off to the next itself.
+      # always() matters: an unexpected failure must not silently end the hunt.
+      - name: Hand off to the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.snipe.outputs.outcome }}
+        run: |
+          set +e -uo pipefail
+
+          if [ "${{ steps.existing.outputs.done }}" = "true" ]; then
+            echo "An instance already exists — chain ends here."
+            exit 0
+          fi
+
+          # Stop the chain only when the job is genuinely finished with it.
+          case "${OUTCOME:-}" in
+            success)
+              echo "Instance acquired — chain ends here."
+              exit 0 ;;
+            limit)
+              echo "Quota is full — chain ends here so it cannot spin forever."
+              exit 0 ;;
+          esac
+
+          # A hard failure (bad credential, image gone) would otherwise relay
+          # every 45 min forever. Let it retry a few times in case the cause is
+          # transient, then stop and leave the failed runs visible.
+          if [ "${{ job.status }}" = "failure" ]; then
+            RECENT=$(gh run list --repo "${{ github.repository }}" \
+                       --workflow "${{ github.workflow }}" --limit 6 \
+                       --json conclusion --jq '[.[]|select(.conclusion=="failure")]|length' \
+                     2>/dev/null || echo 0)
+            if [ "${RECENT:-0}" -ge 5 ]; then
+              echo "::error::5 of the last 6 runs failed. Stopping the chain — fix the cause, then Run workflow again."
+              exit 0
+            fi
+            echo "::warning::This run failed; relaying anyway (${RECENT}/6 recent failures)."
+          fi
+
+          # Pass the current settings along so the chain keeps the same target.
+          gh workflow run "${{ github.workflow }}" \
+            --repo "${{ github.repository }}" \
+            -f ocpus="$OCPUS" \
+            -f memory_gb="$MEMORY_GB" \
+            -f os_version="$OS_VERSION" \
+            -f boot_gb="$BOOT_GB" \
+            && echo "Next run dispatched. The hunt continues." \
+            || {
+                 echo "::error::Could not dispatch the next run — the chain is broken."
+                 echo "Start it again from the Actions tab: Run workflow."
+               }
 
