@@ -47,8 +47,9 @@ jobs:
           EOF
           sed -i 's/^[[:space:]]\{10\}//' /tmp/body.md
 
-          # --assignee guarantees an email regardless of watch settings.
+          # gh cannot infer the repo without a checkout, so name it explicitly.
           gh issue create \
+            --repo "${{ github.repository }}" \
             --title "✅ 抢到 Oracle ARM 实例 — ${IP}（测试）" \
             --body-file /tmp/body.md \
             --assignee "${{ github.repository_owner }}" \
@@ -60,4 +61,5 @@ jobs:
         run: |
           set +e -uo pipefail
           gh workflow disable "TEST notify path" \
+            --repo "${{ github.repository }}" \
             && echo "DISABLE_OK" || echo "DISABLE_FAILED"
