@@ -1,0 +1,63 @@
+name: TEST notify path
+
+# Throwaway workflow: proves the success-report path works before the real
+# sniper needs it. Deleted once verified.
+on:
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  actions: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create issue exactly like the sniper does
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IP: 203.0.113.45
+          STATE: RUNNING
+          AD: VtzO:AP-SINGAPORE-1-AD-1
+          ATTEMPTS: '137'
+          INSTANCE_ID: ocid1.instance.oc1.ap-singapore-1.TESTONLY
+          OCPUS: '2'
+          MEMORY_GB: '12'
+          OCI_REGION: ap-singapore-1
+        run: |
+          set +e -uo pipefail
+          cat > /tmp/body.md <<EOF
+          抢到实例了 🎉  **（这是通知链路测试，不是真实例）**
+
+          | | |
+          |---|---|
+          | 公网 IP | \`${IP}\` |
+          | 状态 | ${STATE} |
+          | 可用域 | ${AD} |
+          | 规格 | VM.Standard.A1.Flex · ${OCPUS} OCPU / ${MEMORY_GB} GB |
+          | 区域 | ${OCI_REGION} |
+          | 尝试次数 | ${ATTEMPTS} |
+          | Instance OCID | \`${INSTANCE_ID}\` |
+
+          登录：
+
+          \`\`\`bash
+          ssh -i ~/.ssh/oracle_arm ubuntu@${IP}
+          \`\`\`
+          EOF
+          sed -i 's/^[[:space:]]\{10\}//' /tmp/body.md
+
+          # --assignee guarantees an email regardless of watch settings.
+          gh issue create \
+            --title "✅ 抢到 Oracle ARM 实例 — ${IP}（测试）" \
+            --body-file /tmp/body.md \
+            --assignee "${{ github.repository_owner }}" \
+            && echo "ISSUE_OK" || echo "ISSUE_FAILED"
+
+      - name: Prove we can disable a schedule
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e -uo pipefail
+          gh workflow disable "TEST notify path" \
+            && echo "DISABLE_OK" || echo "DISABLE_FAILED"
