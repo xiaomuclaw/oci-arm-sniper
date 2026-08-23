@@ -51,7 +51,7 @@ jobs:
       BOOT_GB: ${{ inputs.boot_gb || '150' }}
       DEADLINE_SECONDS: '2640'   # 44 min, leaves headroom under timeout-minutes
       SLEEP_BETWEEN_ADS: '5'
-      SLEEP_BETWEEN_PASSES: '65'   # measured: Oracle allows ~1 launch/67s here
+      SLEEP_BETWEEN_PASSES: '85'   # measured equilibrium; see README on the quota ceiling
 
     steps:
       - name: Install OCI CLI
@@ -186,12 +186,16 @@ jobs:
           ATTEMPTS=0
           N_CAPACITY=0
           N_THROTTLE=0
-          # Self-tuning pace. Measured behaviour: Oracle accepts roughly one
-          # launch per 67s for this tenancy, and a throttled request never
-          # reaches the capacity check at all — it is pure waste. So pacing to
-          # match the real limit yields MORE useful checks than going faster.
-          # PACE widens when Oracle pushes back and decays back down when it
-          # stops, which converges on the true limit without hardcoding it.
+          # Self-tuning pace, started at the measured equilibrium (85s) so it
+          # does not spend the first minutes of every run climbing there.
+          #
+          # Measured across two pace settings, the number of ACCEPTED launches
+          # was flat at 18-20 per 44min window (36s pace -> 20 useful of 40
+          # attempts; 85s pace -> 18 useful of 25). Oracle accepts roughly one
+          # launch per ~140s for this tenancy regardless of how often we ask,
+          # so useful checks are quota-capped, not pace-capped. Pacing near the
+          # quota keeps the same yield with far fewer pointless 429s; going
+          # slower would only lose checks.
           PACE="$SLEEP_BETWEEN_PASSES"
           PACE_MAX=180
           BACKOFF=60
