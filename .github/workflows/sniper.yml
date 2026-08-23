@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       ocpus:
-        description: 'OCPU count (free tier total = 4)'
-        default: '4'
+        description: 'OCPU count (Always Free total = 2 as of 2026-08)'
+        default: '2'
       memory_gb:
-        description: 'Memory in GB (free tier total = 24)'
-        default: '24'
+        description: 'Memory in GB (Always Free total = 12 as of 2026-08)'
+        default: '12'
       os_version:
         description: 'Ubuntu version'
         default: '24.04'
@@ -39,8 +39,8 @@ jobs:
       OCI_REGION: ${{ secrets.REGION }}
       OCI_FINGERPRINT: ${{ secrets.FINGERPRINT }}
       SUBNET_ID: ${{ secrets.SUBNET_ID }}
-      OCPUS: ${{ inputs.ocpus || '4' }}
-      MEMORY_GB: ${{ inputs.memory_gb || '24' }}
+      OCPUS: ${{ inputs.ocpus || '2' }}
+      MEMORY_GB: ${{ inputs.memory_gb || '12' }}
       OS_VERSION: ${{ inputs.os_version || '24.04' }}
       DEADLINE_SECONDS: '2640'   # 44 min, leaves headroom under timeout-minutes
       SLEEP_BETWEEN_ADS: '5'
@@ -208,7 +208,7 @@ jobs:
                   sleep 60
                   ;;
                 limit)
-                  echo "::warning::Service limit reached — your tenancy already holds its A1.Flex allowance (4 OCPU / 24 GB total)."
+                  echo "::warning::Service limit reached — your tenancy already holds its A1.Flex allowance (2 OCPU / 12 GB as of 2026-08)."
                   echo "Delete an existing ARM instance, or lower the ocpus/memory_gb inputs."
                   echo "$OUT" | tail -5
                   echo "outcome=limit" >> "$GITHUB_OUTPUT"
