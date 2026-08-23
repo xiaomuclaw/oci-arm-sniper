@@ -51,7 +51,7 @@ jobs:
       BOOT_GB: ${{ inputs.boot_gb || '150' }}
       DEADLINE_SECONDS: '2640'   # 44 min, leaves headroom under timeout-minutes
       SLEEP_BETWEEN_ADS: '5'
-      SLEEP_BETWEEN_PASSES: '30'
+      SLEEP_BETWEEN_PASSES: '65'   # measured: Oracle allows ~1 launch/67s here
 
     steps:
       - name: Install OCI CLI
@@ -186,10 +186,16 @@ jobs:
           ATTEMPTS=0
           N_CAPACITY=0
           N_THROTTLE=0
-          # Escalating throttle backoff. A fixed sleep keeps re-entering the
-          # rate limit at the same rate; this backs further off each time and
-          # resets as soon as Oracle answers normally again.
+          # Self-tuning pace. Measured behaviour: Oracle accepts roughly one
+          # launch per 67s for this tenancy, and a throttled request never
+          # reaches the capacity check at all — it is pure waste. So pacing to
+          # match the real limit yields MORE useful checks than going faster.
+          # PACE widens when Oracle pushes back and decays back down when it
+          # stops, which converges on the true limit without hardcoding it.
+          PACE="$SLEEP_BETWEEN_PASSES"
+          PACE_MAX=180
           BACKOFF=60
+          CONSEC_THROTTLE=0
           declare -A SEEN_ERRORS=()
 
           # Classify a failed launch. Echoes one of:
@@ -209,7 +215,8 @@ jobs:
             ELAPSED=$(( $(date +%s) - START ))
             if [ "$ELAPSED" -gt "$DEADLINE_SECONDS" ]; then
               echo "--- window closed after ${ELAPSED}s ---"
-              echo "attempts=$ATTEMPTS  no-capacity=$N_CAPACITY  rate-limited=$N_THROTTLE"
+              echo "attempts=$ATTEMPTS  no-capacity=$N_CAPACITY  rate-limited=$N_THROTTLE  final-pace=${PACE}s"
+              echo "useful capacity checks: $N_CAPACITY (a throttled request never reaches the check)"
               if [ "$ATTEMPTS" -gt 0 ] && [ $(( N_THROTTLE * 100 / ATTEMPTS )) -gt 25 ]; then
                 echo "::warning::${N_THROTTLE}/${ATTEMPTS} attempts were rate-limited — consider longer sleeps."
               fi
@@ -262,15 +269,29 @@ jobs:
               case "$KIND" in
                 capacity)
                   N_CAPACITY=$((N_CAPACITY + 1))
+                  CONSEC_THROTTLE=0
                   BACKOFF=60
-                  printf '%s  %-28s no capacity\n' "$(date -u +%H:%M:%S)" "${AD##*:}"
+                  # Ease back toward the configured pace, but slowly — a single
+                  # good answer is not proof the limit has lifted.
+                  [ "$PACE" -gt "$SLEEP_BETWEEN_PASSES" ] && PACE=$(( PACE - 5 ))
+                  printf '%s  %-28s no capacity  (pace %ss)\n' \
+                    "$(date -u +%H:%M:%S)" "${AD##*:}" "$PACE"
                   ;;
                 throttle)
                   N_THROTTLE=$((N_THROTTLE + 1))
-                  echo "$(date -u +%H:%M:%S)  rate-limited by Oracle, backing off ${BACKOFF}s"
+                  CONSEC_THROTTLE=$((CONSEC_THROTTLE + 1))
+                  # Widen the steady-state pace, not just this one sleep. The
+                  # previous version reset the backoff on every capacity reply,
+                  # so in an alternating capacity/throttle pattern it never
+                  # escalated and half of all attempts stayed wasted.
+                  [ "$PACE" -lt "$PACE_MAX" ] && PACE=$(( PACE + 15 ))
+                  [ "$PACE" -gt "$PACE_MAX" ] && PACE="$PACE_MAX"
+                  echo "$(date -u +%H:%M:%S)  rate-limited, sleeping ${BACKOFF}s (pace now ${PACE}s)"
                   sleep "$BACKOFF"
-                  BACKOFF=$(( BACKOFF * 2 ))
-                  [ "$BACKOFF" -gt 300 ] && BACKOFF=300
+                  if [ "$CONSEC_THROTTLE" -ge 2 ]; then
+                    BACKOFF=$(( BACKOFF * 2 ))
+                    [ "$BACKOFF" -gt 300 ] && BACKOFF=300
+                  fi
                   ;;
                 limit)
                   echo "::warning::Service limit reached — your tenancy already holds its A1.Flex allowance (2 OCPU / 12 GB as of 2026-08)."
@@ -299,7 +320,7 @@ jobs:
               esac
               sleep "$SLEEP_BETWEEN_ADS"
             done
-            sleep "$SLEEP_BETWEEN_PASSES"
+            sleep "$PACE"
           done
 
       - name: Collect instance details
