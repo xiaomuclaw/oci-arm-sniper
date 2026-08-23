@@ -49,7 +49,7 @@ jobs:
       MEMORY_GB: ${{ inputs.memory_gb || '12' }}
       OS_VERSION: ${{ inputs.os_version || '24.04' }}
       BOOT_GB: ${{ inputs.boot_gb || '150' }}
-      DEADLINE_SECONDS: '90'   # 44 min, leaves headroom under timeout-minutes
+      DEADLINE_SECONDS: '2640'   # 44 min, leaves headroom under timeout-minutes
       SLEEP_BETWEEN_ADS: '5'
       SLEEP_BETWEEN_PASSES: '30'
 
