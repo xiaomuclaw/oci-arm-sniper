@@ -46,14 +46,31 @@ ssh-keygen -t ed25519 -f ~/.ssh/oracle_arm -N ""
 
 ### 5. 开跑
 
-**定时任务当前是关闭状态**（避免密钥没填齐时空跑）。填完 7 个 Secret 后：
+Actions → **Oracle ARM Sniper** → **Run workflow**。跑一次就够——
+每个 run 在结束前会自己触发下一个 run（自我接力），所以链条会
+一直续下去直到抢到，不用管。
 
-先手动验一次：Actions → 左侧 **Oracle ARM Sniper** → **Run workflow**。
-Preflight 步骤会校验全部 7 个密钥并打印解析出的可用域、镜像、子网名。
-密钥有错会在这一步直接红叉报错，而不是伪装成"没库存"白跑 45 分钟。
+Preflight 步骤会校验全部 7 个密钥并打印可用域、镜像、子网名。
+密钥有错在这一步直接红叉，而不是伪装成"没库存"白跑 45 分钟。
 
-Preflight 绿灯后，再开定时：Actions → Oracle ARM Sniper → 右上 `···`
-→ **Enable workflow**。之后每 15 分钟接力，24 小时不断，不用管了。
+## 为什么不靠 cron
+
+GitHub 的 `schedule` 是 best-effort，实测 40 分钟内一次都没触发。
+若只靠它，当前 run 跑完 44 分钟窗口后就**静默停止**，而你不会收到任何提示。
+
+所以真正维持不断的是最后一步 `Hand off to the next run`：
+每个 run 结束前用 `gh workflow run` 触发下一个（已实测 `github.token`
+可以 dispatch workflow_dispatch）。`cron: '17 */3 * * *'` 只留作兜底，
+万一某次接力丢了能把链条重新拉起来。
+
+链条在这些情况下**主动停止**（不会无限烧 Actions 额度）：
+
+| 情况 | 行为 |
+|---|---|
+| 抢到实例 | 开 Issue + 关 cron + 停链 |
+| 配额已满 | 打印原因，干净退出 |
+| 已存在 A1 实例 | 每个 run 开跑前自查，直接停链 |
+| 最近 6 次里 5 次失败 | 熔断，保留失败记录待你查 |
 
 ## 抢到之后
 
