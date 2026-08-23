@@ -1,0 +1,85 @@
+name: T2
+
+on:
+  workflow_dispatch:
+    inputs:
+      ocpus:
+        description: 'OCPU count (free tier total = 4)'
+        default: '4'
+      memory_gb:
+        description: 'Memory in GB (free tier total = 24)'
+        default: '24'
+      os_version:
+        description: 'Ubuntu version'
+        default: '24.04'
+
+# Never run two snipers at once, and never cancel the active one.
+concurrency:
+  group: t2
+  cancel-in-progress: false
+
+permissions:
+  issues: write   # to file the "instance acquired" report
+  actions: write  # to disable the cron once we win
+
+jobs:
+  snipe:
+    name: Snipe A1.Flex
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
+      OCI_TENANCY: ${{ secrets.TENANCY_OCID }}
+      OCI_USER: ${{ secrets.USER_OCID }}
+      OCI_REGION: ${{ secrets.REGION }}
+      OCI_FINGERPRINT: ${{ secrets.FINGERPRINT }}
+      SUBNET_ID: ${{ secrets.SUBNET_ID }}
+      OCPUS: ${{ inputs.ocpus || '4' }}
+      MEMORY_GB: ${{ inputs.memory_gb || '24' }}
+      OS_VERSION: ${{ inputs.os_version || '24.04' }}
+      DEADLINE_SECONDS: '2640'   # 44 min, leaves headroom under timeout-minutes
+      SLEEP_BETWEEN_ADS: '5'
+      SLEEP_BETWEEN_PASSES: '30'
+
+    steps:
+      - name: Install OCI CLI
+        run: |
+          curl -fsSL -o /tmp/oci-install.sh \
+            https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh
+          chmod +x /tmp/oci-install.sh
+          /tmp/oci-install.sh --accept-all-defaults >/tmp/oci-install.log 2>&1 \
+            || { tail -40 /tmp/oci-install.log; exit 1; }
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Write OCI config
+        run: |
+          mkdir -p ~/.oci ~/.ssh
+          cat > ~/.oci/config <<EOF
+          [DEFAULT]
+          user=${OCI_USER}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY}
+          region=${OCI_REGION}
+          key_file=$HOME/.oci/key.pem
+          EOF
+          cat > ~/.oci/key.pem <<'EOF'
+          ${{ secrets.PRIVATE_KEY }}
+          EOF
+          cat > ~/.ssh/oracle.pub <<'EOF'
+          ${{ secrets.USER_SSH_PUB_KEY }}
+          EOF
+          # Tolerate a key pasted with leading spaces; PEM/SSH lines have none.
+          sed -i 's/^[[:space:]]*//' ~/.oci/key.pem ~/.ssh/oracle.pub
+          chmod 600 ~/.oci/config ~/.oci/key.pem
+          # Fail loudly now rather than looking like "no stock" for 45 minutes.
+          if ! grep -q 'BEGIN.*PRIVATE KEY' ~/.oci/key.pem; then
+            echo "::error::PRIVATE_KEY secret is not a PEM private key."
+            echo "Paste the whole api_key.pem including BEGIN/END lines."
+            exit 1
+          fi
+          if ! grep -qE '^(ssh-rsa|ssh-ed25519|ecdsa-sha2-)' ~/.ssh/oracle.pub; then
+            echo "::error::USER_SSH_PUB_KEY is not an SSH public key."
+            echo "Use the .pub file contents (starts with ssh-rsa or ssh-ed25519)."
+            exit 1
+          fi
+
