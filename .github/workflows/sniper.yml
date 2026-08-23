@@ -12,6 +12,9 @@ on:
       os_version:
         description: 'Ubuntu version'
         default: '24.04'
+      boot_gb:
+        description: 'Boot volume GB (Always Free storage total = 200)'
+        default: '150'
 
   schedule:
     # Every 15 min. Each run loops for ~44 min, so coverage is continuous:
@@ -43,6 +46,7 @@ jobs:
       OCPUS: ${{ inputs.ocpus || '2' }}
       MEMORY_GB: ${{ inputs.memory_gb || '12' }}
       OS_VERSION: ${{ inputs.os_version || '24.04' }}
+      BOOT_GB: ${{ inputs.boot_gb || '150' }}
       DEADLINE_SECONDS: '2640'   # 44 min, leaves headroom under timeout-minutes
       SLEEP_BETWEEN_ADS: '5'
       SLEEP_BETWEEN_PASSES: '30'
@@ -137,7 +141,7 @@ jobs:
 
           echo "Region      : $OCI_REGION"
           echo "Domains     : ${ADS[*]}"
-          echo "Shape       : VM.Standard.A1.Flex  ${OCPUS} OCPU / ${MEMORY_GB} GB"
+          echo "Shape       : VM.Standard.A1.Flex  ${OCPUS} OCPU / ${MEMORY_GB} GB / ${BOOT_GB} GB disk"
           echo "Image       : $IMAGE_ID (Ubuntu $OS_VERSION)"
           echo "Subnet      : $(echo "$SUBNET" | jq -r '.data."display-name"' 2>/dev/null || echo '(name unavailable)')"
 
@@ -159,6 +163,7 @@ jobs:
               *"Out of host capacity"*|*outOfCapacity*|*OutOfCapacity*) echo capacity ;;
               *TooManyRequests*|*"429"*|*Throttl*)                      echo throttle ;;
               *LimitExceeded*|*QuotaExceeded*|*"exceed"*"limit"*)       echo limit ;;
+              *"volume size"*|*VolumeSize*|*"storage"*"limit"*)         echo limit ;;
               *NotAuthenticated*|*NotAuthorizedOrNotFound*|*"401"*|*"403"*) echo fatal ;;
               *) echo unknown ;;
             esac
@@ -185,7 +190,7 @@ jobs:
                 --image-id "$IMAGE_ID" \
                 --subnet-id "$SUBNET_ID" \
                 --assign-public-ip true \
-                --boot-volume-size-in-gbs 50 \
+                --boot-volume-size-in-gbs "$BOOT_GB" \
                 --ssh-authorized-keys-file ~/.ssh/oracle.pub \
                 --display-name "sniper-$(date -u +%m%d-%H%M%S)" \
                 2>&1)
@@ -214,7 +219,8 @@ jobs:
                   ;;
                 limit)
                   echo "::warning::Service limit reached — your tenancy already holds its A1.Flex allowance (2 OCPU / 12 GB as of 2026-08)."
-                  echo "Delete an existing ARM instance, or lower the ocpus/memory_gb inputs."
+                  echo "Either the A1 core/memory allowance or the 200 GB storage cap is full."
+            echo "Delete an existing instance/volume, or lower ocpus/memory_gb/boot_gb."
                   echo "$OUT" | tail -5
                   echo "outcome=limit" >> "$GITHUB_OUTPUT"
                   exit 0
@@ -290,6 +296,7 @@ jobs:
           | 状态 | ${STATE} |
           | 可用域 | ${AD} |
           | 规格 | VM.Standard.A1.Flex · ${OCPUS} OCPU / ${MEMORY_GB} GB |
+          | 系统盘 | ${BOOT_GB} GB |
           | 区域 | ${OCI_REGION} |
           | 尝试次数 | ${ATTEMPTS}（本次运行内） |
           | Instance OCID | \`${INSTANCE_ID}\` |

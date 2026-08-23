@@ -74,9 +74,15 @@ ssh -i ~/.ssh/oracle_arm ubuntu@<IP>
 
 ## 免费额度红线
 
-Always Free ARM 每个账号总共 **4 OCPU + 24 GB**。本工作流默认一次全要，
-抢到即用满。若想拆成两台 2C/12G，用 Run workflow 的 `ocpus` / `memory_gb`
-输入框填 `2` / `12`，抢到第一台后重新启用定时任务再抢第二台。
+Always Free ARM 额度（2026-08 实测，Oracle 已下调）：
+
+| 资源 | 上限 | 本工作流默认 |
+|---|---|---|
+| A1 CPU | 2 OCPU | 2（用满） |
+| A1 内存 | 12 GB | 12（用满） |
+| 块存储 | 200 GB | 系统盘 150 GB |
+
+想改就用 Run workflow 的 `ocpus` / `memory_gb` / `boot_gb` 输入框，不必改代码。
 
 配额已满时脚本会打印 `Service limit reached` 并干净退出，不会空转。
 
