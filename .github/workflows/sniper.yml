@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 55
     env:
       OCI_CLI_SUPPRESS_FILE_PERMISSIONS_WARNING: 'True'
+      SUPPRESS_LABEL_WARNING: 'True'
       OCI_TENANCY: ${{ secrets.TENANCY_OCID }}
       OCI_USER: ${{ secrets.USER_OCID }}
       OCI_REGION: ${{ secrets.REGION }}
@@ -94,16 +95,18 @@ jobs:
           # default `bash -e` would abort first and print nothing useful.
           set +e -uo pipefail
 
-          if ! ADS_JSON=$(oci iam availability-domain list 2>&1); then
+          # Keep stderr out of the JSON: the CLI prints a key-permissions
+          # warning ahead of the payload, which makes jq choke.
+          if ! ADS_JSON=$(oci iam availability-domain list 2>/tmp/ad.err); then
             echo "::error::Cannot authenticate to OCI. Check TENANCY_OCID, USER_OCID, FINGERPRINT, PRIVATE_KEY, REGION."
-            echo "$ADS_JSON" | tail -20
+            tail -20 /tmp/ad.err
             exit 1
           fi
           mapfile -t ADS < <(echo "$ADS_JSON" | jq -r '.data[].name' 2>/dev/null | sort)
           if [ "${#ADS[@]}" -eq 0 ]; then
             echo "::error::No availability domains parsed for this region."
-            echo "--- raw response from 'oci iam availability-domain list' ---"
-            echo "$ADS_JSON" | head -40
+            echo "--- stdout ---"; echo "$ADS_JSON" | head -30
+            echo "--- stderr ---"; head -10 /tmp/ad.err
             exit 1
           fi
 
@@ -121,9 +124,9 @@ jobs:
 
           # Confirm the subnet exists and note its VCN, so a wrong-region subnet
           # surfaces here instead of masquerading as an out-of-capacity error.
-          if ! SUBNET=$(oci network subnet get --subnet-id "$SUBNET_ID" 2>&1); then
+          if ! SUBNET=$(oci network subnet get --subnet-id "$SUBNET_ID" 2>/tmp/sub.err); then
             echo "::error::SUBNET_ID is not reachable in region $OCI_REGION."
-            echo "$SUBNET" | tail -10
+            tail -10 /tmp/sub.err
             exit 1
           fi
 
@@ -136,7 +139,7 @@ jobs:
           echo "Domains     : ${ADS[*]}"
           echo "Shape       : VM.Standard.A1.Flex  ${OCPUS} OCPU / ${MEMORY_GB} GB"
           echo "Image       : $IMAGE_ID (Ubuntu $OS_VERSION)"
-          echo "Subnet      : $(echo "$SUBNET" | jq -r '.data."display-name"')"
+          echo "Subnet      : $(echo "$SUBNET" | jq -r '.data."display-name"' 2>/dev/null || echo '(name unavailable)')"
 
       - name: Snipe loop
         id: snipe
