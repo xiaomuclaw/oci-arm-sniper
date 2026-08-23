@@ -184,6 +184,12 @@ jobs:
           read -r -a ADS <<< "$ADS"
           START=$(date +%s)
           ATTEMPTS=0
+          N_CAPACITY=0
+          N_THROTTLE=0
+          # Escalating throttle backoff. A fixed sleep keeps re-entering the
+          # rate limit at the same rate; this backs further off each time and
+          # resets as soon as Oracle answers normally again.
+          BACKOFF=60
           declare -A SEEN_ERRORS=()
 
           # Classify a failed launch. Echoes one of:
@@ -202,17 +208,31 @@ jobs:
           while true; do
             ELAPSED=$(( $(date +%s) - START ))
             if [ "$ELAPSED" -gt "$DEADLINE_SECONDS" ]; then
-              echo "Reached the ${DEADLINE_SECONDS}s window after $ATTEMPTS attempts. The next scheduled run takes over."
+              echo "--- window closed after ${ELAPSED}s ---"
+              echo "attempts=$ATTEMPTS  no-capacity=$N_CAPACITY  rate-limited=$N_THROTTLE"
+              if [ "$ATTEMPTS" -gt 0 ] && [ $(( N_THROTTLE * 100 / ATTEMPTS )) -gt 25 ]; then
+                echo "::warning::${N_THROTTLE}/${ATTEMPTS} attempts were rate-limited — consider longer sleeps."
+              fi
+              echo "The next run takes over."
               echo "outcome=timeout" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
             for AD in "${ADS[@]}"; do
               ATTEMPTS=$((ATTEMPTS + 1))
-              # No --wait-for-state here: a launch that is accepted returns
+              # --no-retry is essential. By default the CLI retries a failed
+              # launch internally with exponential backoff: measured at 101s per
+              # attempt versus 1s with the flag, and each of those hidden
+              # retries is a separate API request, so a single logical attempt
+              # became a burst of ~8 and Oracle rate-limited us (37% of attempts
+              # came back TooManyRequests). One request per attempt, paced by
+              # the sleeps below, is both faster and gentler.
+              #
+              # No --wait-for-state either: a launch that is accepted returns
               # PROVISIONING, and waiting 1s for RUNNING would time out and be
               # misread as a failure while the instance is actually being built.
               OUT=$(oci compute instance launch \
+                --no-retry \
                 --availability-domain "$AD" \
                 --compartment-id "$OCI_TENANCY" \
                 --shape 'VM.Standard.A1.Flex' \
@@ -241,11 +261,16 @@ jobs:
               KIND=$(classify "$OUT")
               case "$KIND" in
                 capacity)
+                  N_CAPACITY=$((N_CAPACITY + 1))
+                  BACKOFF=60
                   printf '%s  %-28s no capacity\n' "$(date -u +%H:%M:%S)" "${AD##*:}"
                   ;;
                 throttle)
-                  echo "$(date -u +%H:%M:%S)  throttled by Oracle, backing off 60s"
-                  sleep 60
+                  N_THROTTLE=$((N_THROTTLE + 1))
+                  echo "$(date -u +%H:%M:%S)  rate-limited by Oracle, backing off ${BACKOFF}s"
+                  sleep "$BACKOFF"
+                  BACKOFF=$(( BACKOFF * 2 ))
+                  [ "$BACKOFF" -gt 300 ] && BACKOFF=300
                   ;;
                 limit)
                   echo "::warning::Service limit reached — your tenancy already holds its A1.Flex allowance (2 OCPU / 12 GB as of 2026-08)."
