@@ -12,12 +12,13 @@ on:
       os_version:
         description: 'Ubuntu version'
         default: '24.04'
-  schedule:
-    # Every 15 min. Each run loops for 45 min, so coverage is continuous:
-    # one run is always active and the next one waits in the concurrency queue.
-    - cron: '*/15 * * * *'
 
 # Never run two snipers at once, and never cancel the active one.
+  schedule:
+    # Every 15 min. Each run loops for ~44 min, so coverage is continuous:
+    # one run is always active and the next waits in the concurrency queue.
+    - cron: '*/15 * * * *'
+
 concurrency:
   group: oracle-arm-sniper
   cancel-in-progress: false
@@ -306,3 +307,4 @@ jobs:
             --title "✅ 抢到 Oracle ARM 实例 — ${IP}" \
             --body-file /tmp/body.md \
             || { echo "::warning::Issue creation failed; details are in this log."; cat /tmp/body.md; }
+
