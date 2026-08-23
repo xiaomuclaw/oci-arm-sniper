@@ -99,9 +99,11 @@ jobs:
             echo "$ADS_JSON" | tail -20
             exit 1
           fi
-          mapfile -t ADS < <(echo "$ADS_JSON" | jq -r '.data[].name' | sort)
+          mapfile -t ADS < <(echo "$ADS_JSON" | jq -r '.data[].name' 2>/dev/null | sort)
           if [ "${#ADS[@]}" -eq 0 ]; then
-            echo "::error::No availability domains returned for region $OCI_REGION."
+            echo "::error::No availability domains parsed for this region."
+            echo "--- raw response from 'oci iam availability-domain list' ---"
+            echo "$ADS_JSON" | head -40
             exit 1
           fi
 
