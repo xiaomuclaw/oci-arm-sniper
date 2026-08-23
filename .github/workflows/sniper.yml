@@ -273,10 +273,11 @@ jobs:
           ATTEMPTS: ${{ steps.snipe.outputs.attempts }}
           INSTANCE_ID: ${{ steps.snipe.outputs.instance_id }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           # Stop first: the cron must not fire again and grab a second instance
-          # while this report is still being written.
-          gh workflow disable "${{ github.workflow }}" 2>/dev/null \
+          # while this report is still being written. --repo is required because
+          # there is no checkout, so gh cannot infer the repository from git.
+          gh workflow disable "${{ github.workflow }}" --repo "${{ github.repository }}" \
             && echo "Schedule disabled." \
             || echo "::warning::Could not disable the schedule automatically — turn it off from the Actions tab."
 
@@ -296,7 +297,7 @@ jobs:
           登录：
 
           \`\`\`bash
-          ssh -i <你的私钥> ubuntu@${IP}
+          ssh -i ~/.ssh/oracle_arm ubuntu@${IP}
           \`\`\`
 
           **定时任务已自动关闭**，不会再继续抢第二台。
@@ -308,8 +309,11 @@ jobs:
           EOF
           sed -i 's/^[[:space:]]\{10\}//' /tmp/body.md
 
+          # --assignee guarantees an email even if the repo is not watched.
           gh issue create \
+            --repo "${{ github.repository }}" \
             --title "✅ 抢到 Oracle ARM 实例 — ${IP}" \
             --body-file /tmp/body.md \
-            || { echo "::warning::Issue creation failed; details are in this log."; cat /tmp/body.md; }
+            --assignee "${{ github.repository_owner }}" \
+            || { echo "::warning::Issue creation failed; the details are printed below."; cat /tmp/body.md; }
 
