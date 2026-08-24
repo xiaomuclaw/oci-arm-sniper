@@ -337,8 +337,18 @@ jobs:
           oci compute instance get --instance-id "$ID" \
             --wait-for-state RUNNING --max-wait-seconds 600 >/dev/null 2>&1 || true
 
-          IP=$(oci compute instance list-vnics --instance-id "$ID" \
-                 --query 'data[0]."public-ip"' --raw-output 2>/dev/null || true)
+          # The VNIC is often attached a little after the instance reports
+          # RUNNING, so a single query can come back empty. This path runs
+          # exactly once in the project's life — retry rather than report
+          # "ubuntu@pending" and make the IP hunt manual.
+          IP=""
+          for _ in $(seq 1 10); do
+            IP=$(oci compute instance list-vnics --instance-id "$ID" \
+                   --query 'data[0]."public-ip"' --raw-output 2>/dev/null || true)
+            [ -n "$IP" ] && [ "$IP" != "null" ] && break
+            sleep 15
+          done
+          [ "$IP" = "null" ] && IP=""
           STATE=$(oci compute instance get --instance-id "$ID" \
                  --query 'data."lifecycle-state"' --raw-output 2>/dev/null || echo UNKNOWN)
 
