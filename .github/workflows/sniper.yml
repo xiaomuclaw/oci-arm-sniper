@@ -360,7 +360,6 @@ jobs:
           echo "Public IP: ${IP:-pending}"
 
       - name: File the report and stop the cron
-        if: steps.snipe.outputs.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           IP: ${{ steps.details.outputs.ip }}
@@ -417,6 +416,50 @@ jobs:
       # The relay. GitHub's cron is unreliable (it had not fired once in the
       # first 40 minutes here), so each run hands off to the next itself.
       # always() matters: an unexpected failure must not silently end the hunt.
+
+      - name: Send Telegram notification
+        if: steps.snipe.outputs.outcome == 'success'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          IP: ${{ steps.details.outputs.ip }}
+          STATE: ${{ steps.details.outputs.state }}
+          AD: ${{ steps.snipe.outputs.ad }}
+          ATTEMPTS: ${{ steps.snipe.outputs.attempts }}
+          INSTANCE_ID: ${{ steps.snipe.outputs.instance_id }}
+        run: |
+          set +e -uo pipefail
+          
+          MESSAGE="🎉 成功抢到 Oracle ARM 实例！
+
+📍 公网 IP: ${IP}
+📊 状态: ${STATE}
+🌐 可用域: ${AD}
+💻 规格: VM.Standard.A1.Flex · ${OCPUS} OCPU / ${MEMORY_GB} GB
+💾 系统盘: ${BOOT_GB} GB
+🗺️  区域: ${OCI_REGION}
+🔢 尝试次数: ${ATTEMPTS}
+
+🔑 登录命令:
+ssh -i ~/.ssh/oracle_arm ubuntu@${IP}
+
+Instance OCID:
+${INSTANCE_ID}
+
+⚠️ 定时任务已自动关闭，不会再抢第二台。"
+
+          # URL encode the message
+          MESSAGE_ENCODED=$(echo -n "$MESSAGE" | jq -sRr @uri)
+          
+          curl -s -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "text=${MESSAGE_ENCODED}" \
+            -d "parse_mode=HTML" \
+            && echo "Telegram notification sent successfully." \
+            || echo "::warning::Failed to send Telegram notification."
+
+
       - name: Hand off to the next run
         if: always()
         env:
